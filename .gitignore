@@ -1,0 +1,9 @@
+*.cmd
+.*.cmd
+.tmp_versions
+*.mod.*
+*.o
+*.ko
+*.order
+*.symvers
+/kernel
