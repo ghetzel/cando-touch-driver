@@ -17,7 +17,8 @@ default:
 	ssh root@$(HOST) 'cd build && make build && \
 		[ -d /lib/modules/`uname -r`/extra ] || mkdir -v /lib/modules/`uname -r`/extra; \
 		mv -v cando.ko /lib/modules/`uname -r`/extra/cando.ko; \
-		depmod'
+		depmod && \
+		modprobe -vr cando; modprobe -v cando'
 
 build:
 	$(MAKE) -C $(KDIR) M=$$PWD

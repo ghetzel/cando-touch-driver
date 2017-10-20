@@ -40,33 +40,26 @@ struct cando_device {
 static void cando_send_touch_event(struct input_dev *input, int contact_num,
     int x, int y, int state, struct coords *last)
 {
+
     if (state) {
-        // send multitouch events
-        input_event(input, EV_ABS, ABS_MT_SLOT, contact_num);
+        if (last && last->x == x && last->y == y) {
+            return;
+        }
+
+        input_mt_slot(input, contact_num);
         input_report_abs(input, ABS_MT_TRACKING_ID, contact_num);
         input_report_abs(input, ABS_MT_POSITION_X, x);
         input_report_abs(input, ABS_MT_POSITION_Y, y);
 
-        // send touch event
-        input_report_key(input, BTN_TOUCH, 1);
-
-        // send traditional single-touch (ST) events
-        input_report_abs(input, ABS_X, x);
-        input_report_abs(input, ABS_Y, y);
-
-        input_event(input, EV_SYN, SYN_REPORT, 0);
-        input_sync(input);
-
+        // printk(KERN_INFO "Emitting contact %d\n", contact_num);
         last->x = x;
         last->y = y;
         last->state = 1;
     } else {
-        input_event(input, EV_ABS, ABS_MT_SLOT, contact_num);
+        input_mt_slot(input, contact_num);
         input_report_abs(input, ABS_MT_TRACKING_ID, -1);
-        input_report_key(input, BTN_TOUCH, 0);
-        input_event(input, EV_SYN, SYN_REPORT, 0);
-        input_sync(input);
 
+        // printk(KERN_INFO "Lifting contact %d\n", contact_num);
         last->state = 0;
     }
 }
@@ -79,7 +72,13 @@ static void cando_report(struct hid_device *hdev, struct hid_report *report)
     unsigned count;
     struct hid_field *field;
     int32_t value;
-    int32_t active1, active2, x1, y1, x2, y2, active_contacts;
+    int32_t active1 = 0;
+    int32_t active2 = 0;
+    int32_t x1 = 0;
+    int32_t y1 = 0;
+    int32_t x2 = 0;
+    int32_t y2 = 0;
+    int32_t active_contacts = 0;
 
     if(!cdev || !cdev->input) {
         return;
@@ -99,6 +98,7 @@ static void cando_report(struct hid_device *hdev, struct hid_report *report)
         case 0: // Contact 1 touch detect
             if (value) {
                 active1 = 1;
+                active_contacts++;
             } else {
                 active1 = 0;
             }
@@ -115,6 +115,7 @@ static void cando_report(struct hid_device *hdev, struct hid_report *report)
         case 5: // Contact 2 touch detect
             if (value) {
                 active2 = 1;
+                active_contacts++;
             } else {
                 active2 = 0;
             }
@@ -127,15 +128,20 @@ static void cando_report(struct hid_device *hdev, struct hid_report *report)
         case 9: // Contact 2 Y-coordinate
             y2 = value;
             break;
-
-        case 10: // Total active contact count
-            active_contacts = value;
-            break;
         }
     }
 
+    input_mt_report_pointer_emulation(cdev->input, true);
+
     cando_send_touch_event(cdev->input, 0, x1, y1, active1, cdev->last1);
-    cando_send_touch_event(cdev->input, 1, x2, y2, active2, cdev->last2);
+
+    // if contact 2 is currently active, or it's not but the previous state was
+    // (making this the "contact inactive" signal)
+    if (active2 || (cdev->last2 && cdev->last2->state)) {
+        cando_send_touch_event(cdev->input, 1, x2, y2, active2, cdev->last2);
+    }
+
+    input_sync(cdev->input);
 }
 
 // -----------------------------------------------------------------------------
@@ -166,8 +172,13 @@ static int cando_probe(struct hid_device *hdev, const struct hid_device_id *id)
     input->id.bustype  = BUS_USB;
     input->dev.parent  = &hdev->dev;
 
-    input_set_capability(input, EV_KEY, BTN_TOUCH);
-    input_set_capability(input, EV_KEY, BTN_TOUCH);
+    __set_bit(EV_KEY, input->evbit);
+    __set_bit(EV_ABS, input->evbit);
+    __set_bit(BTN_TOUCH, input->keybit);
+    __set_bit(INPUT_PROP_DIRECT, input->propbit);
+
+    input->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+    input->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
 
     input_set_abs_params(input, ABS_X, 0, CANDO_ABS_X_MAX, 0, 0);
     input_set_abs_params(input, ABS_Y, 0, CANDO_ABS_Y_MAX, 0, 0);
